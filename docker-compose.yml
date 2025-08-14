@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend.Dockerfile
+    container_name: portfolio-backend
+    environment:
+      - TZ=Asia/Tokyo
+      # Gemini 키가 백엔드에서만 필요 (service.py)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); print('ok')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend.Dockerfile
+    container_name: portfolio-frontend
+    environment:
+      - TZ=Asia/Tokyo
+      # 프론트에서 BACKEND_URL을 환경변수로도 덮어쓸 수 있음(기본값은 Dockerfile에 설정)
+      - BACKEND_URL=http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+# (기본 bridge 네트워크 사용)
