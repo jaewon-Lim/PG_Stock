@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend.Dockerfile
+    working_dir: /app/backend
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0 --port 8000
+      --reload
+      --reload-dir /app/backend/app
+      --reload-include *.py
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - ./:/app           # 코드 저장 즉시 반영
+      - /app/.venv        # 호스트 venv 마스킹
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/docs >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend.Dockerfile
+    working_dir: /app
+    command: >
+      streamlit run /app/app.py
+      --server.address 0.0.0.0
+      --server.port 8501
+      --server.runOnSave true
+    environment:
+      - BACKEND_URL=http://backend:8000
+    volumes:
+      - ./:/app
+      - /app/.venv
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
