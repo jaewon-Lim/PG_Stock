@@ -5,6 +5,10 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from dotenv import load_dotenv
+import httpx
+import logging
+import traceback
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -337,9 +341,7 @@ def ai_insights(symbol: str, period: str = "1y"):
     #import google.genai as genai
     #from google.genai.types import Content, Part
     #client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-    
     from openai import OpenAI
-    import os
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     ctx = _fetch_company_context(symbol)
@@ -378,39 +380,46 @@ def ai_insights(symbol: str, period: str = "1y"):
     #    contents=Content(parts=[Part.from_text(prompt)])
     #)
     #raw = response.text.strip()
-
-    resp = client.responses.create(
-        model="gpt-4.1-mini",             # 가성비/JSON 준수 우수 (원하면 상위 모델로 변경 가능)
-        input=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"}  # JSON 강제
-    )
-    raw = resp.output_text  # 모델이 출력한 JSON 문자열
-
     try:
-        parsed = json.loads(raw)
-    except Exception:
-        text2 = raw.strip("` \n")
-        text2 = text2[text2.find("{"): text2.rfind("}") + 1] if "{" in text2 and "}" in text2 else "{}"
-        parsed = json.loads(text2)
+        # Responses API 대신 Chat Completions 사용 (JSON 강제)
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+        raw = resp.choices[0].message.content or "{}"
 
-    # AI가 top_links를 안 주거나 비웠을 경우 → yfinance 뉴스로 보완
-    parsed_links = parsed.get("top_links", [])
-    if not parsed_links and ctx["news"]:
-        parsed_links = [
-            {
-                "title": n.get("title"),
-                "source": n.get("publisher"),
-                "url": n.get("link")
-            }
-            for n in ctx["news"][:3]
-            if n.get("title") and n.get("link")
-        ]
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            text2 = raw.strip("` \n")
+            text2 = text2[text2.find("{"): text2.rfind("}") + 1] if "{" in text2 and "}" in text2 else "{}"
+            parsed = json.loads(text2)
 
-    return {
-        "company_overview": parsed.get("company_overview"),
-        "rnd_assessment": parsed.get("rnd_assessment"),
-        "outlook": parsed.get("outlook"),
-        "top_links": parsed_links,
-        "similar_companies": parsed.get("similar_companies", []),
-        "one_line": parsed.get("one_line"),
-    }
+        # AI가 top_links를 비웠으면 yfinance 뉴스로 보완
+        parsed_links = parsed.get("top_links", [])
+        if not parsed_links and ctx["news"]:
+            parsed_links = [
+                {
+                    "title": n.get("title"),
+                    "source": n.get("publisher"),
+                    "url": n.get("link")
+                }
+                for n in ctx["news"][:3]
+                if n.get("title") and n.get("link")
+            ]
+
+        return {
+            "company_overview": parsed.get("company_overview"),
+            "rnd_assessment": parsed.get("rnd_assessment"),
+            "outlook": parsed.get("outlook"),
+            "top_links": parsed_links,
+            "similar_companies": parsed.get("similar_companies", []),
+            "one_line": parsed.get("one_line"),
+        }
+
+    except Exception as e:
+        # 개발 중에는 트레이스백도 남겨두자
+        traceback.print_exc()
+        logger.exception("ai_insights 실패")
+        raise HTTPException(status_code=500, detail=str(e))
